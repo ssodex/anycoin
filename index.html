@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <title>BTC Portfolio Analyzer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #f8f9fa; color: #212529; padding: 20px; line-height: 1.5; }
+        .container { max-width: 1000px; margin: auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); }
+        
+        .header { text-align: center; margin-bottom: 30px; }
+        h1 { color: #f7931a; margin-bottom: 10px; }
+        
+        /* Styl pro nahrávání souboru */
+        .upload-section { border: 2px dashed #f7931a; padding: 20px; text-align: center; border-radius: 10px; background: #fffaf4; margin-bottom: 30px; transition: 0.3s; }
+        .upload-section:hover { background: #fff5e6; }
+        input[type="file"] { margin-top: 10px; cursor: pointer; }
+
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 30px; }
+        .card { background: white; padding: 20px; border-radius: 10px; border: 1px solid #e9ecef; text-align: center; }
+        .card h3 { margin: 0; font-size: 0.85em; color: #6c757d; text-transform: uppercase; letter-spacing: 1px; }
+        .card p { margin: 10px 0 0 0; font-size: 1.4em; font-weight: 700; }
+        
+        .profit { color: #28a745; }
+        .loss { color: #dc3545; }
+
+        .table-container { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th { background: #f8f9fa; text-align: left; padding: 12px; font-size: 0.9em; border-bottom: 2px solid #dee2e6; }
+        td { padding: 12px; border-bottom: 1px solid #eee; font-size: 0.95em; }
+        tr:hover { background-color: #fcfcfc; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1>Bitcoin Portfolio Analyzer</h1>
+        <p>Nahrajte svůj CSV soubor pro analýzu portfolia</p>
+    </div>
+
+    <div class="upload-section">
+        <input type="file" id="csvFile" accept=".csv">
+        <p id="status-text" style="font-size: 0.9em; color: #666; margin-top: 10px;">Čekám na soubor...</p>
+    </div>
+    
+    <div id="results" style="display:none;">
+        <div class="stats-grid">
+            <div class="card">
+                <h3>Investováno</h3>
+                <p id="total-invested">-</p>
+            </div>
+
+            <div class="card">
+                <h3>Aktuální hodnota</h3>
+                <p id="current-total-value">-</p>
+            </div>
+
+            <div class="card">
+                <h3>Zisk / Ztráta</h3>
+                <p id="total-profit-val">-</p>
+            </div>
+
+            <div class="card">
+                <h3>Zhodnocení</h3>
+                <p id="total-profit-pct">-</p>
+            </div>
+
+            <div class="card">
+                <h3>Cena BTC</h3>
+                <p id="btc-current-price">-</p>
+            </div>
+
+            <div class="card">
+                <h3>Celkem BTC</h3>
+                <p id="total-btc-held">-</p>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Datum</th>
+                        <th>Investice</th>
+                        <th>Množství</th>
+                        <th>Aktuálně</th>
+                        <th>Zisk</th>
+                        <th>%</th>
+                    </tr>
+                </thead>
+                <tbody id="trades-table"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    const fileInput = document.getElementById('csvFile');
+    const statusText = document.getElementById('status-text');
+
+    fileInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        statusText.innerText = "Zpracovávám...";
+        
+        analyzeBTC(file);
+    });
+
+    async function analyzeBTC(file) {
+        try {
+            // 1. Získání aktuální ceny BTC v CZK
+            const response = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=czk');
+            const priceData = await response.json();
+            const currentPrice = priceData.bitcoin.czk;
+
+            // 2. Čtení nahraného CSV souboru
+            Papa.parse(file, {
+                header: true,
+                dynamicTyping: true,
+                skipEmptyLines: true,
+                complete: function(results) {
+                    renderDashboard(results.data, currentPrice);
+                },
+                error: function(error) {
+                    alert("Chyba při čtení CSV souboru.");
+                    console.error(error);
+                }
+            });
+        } catch (error) {
+            alert("Chyba při komunikaci s API pro cenu Bitcoinu.");
+            console.error(error);
+        }
+    }
+
+    function renderDashboard(data, btcPrice) {
+        const orders = {};
+        
+        // Párování dat podle Order ID
+        data.forEach(row => {
+            const orderId = row['Order ID'];
+            if (!orderId) return;
+            
+            if (!orders[orderId]) {
+                orders[orderId] = {
+                    date: row.Date,
+                    btc: 0,
+                    czk: 0
+                };
+            }
+            
+            if (row.Type === 'trade fill' && row.Currency === 'BTC') {
+                orders[orderId].btc += Math.abs(row.Amount);
+            }
+
+            if (row.Type === 'trade payment' && row.Currency === 'CZK') {
+                orders[orderId].czk += Math.abs(row.Amount);
+            }
+        });
+
+        let totalInvested = 0;
+        let totalBtcHeld = 0;
+
+        const tableBody = document.getElementById('trades-table');
+        tableBody.innerHTML = '';
+
+        const validOrders = Object.values(orders)
+            .filter(order => order.btc > 0 && order.czk > 0)
+            .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+        validOrders.forEach(order => {
+            const currentVal = order.btc * btcPrice;
+            const profitVal = currentVal - order.czk;
+            const profitPct = order.czk > 0 ? (profitVal / order.czk) * 100 : 0;
+            
+            totalInvested += order.czk;
+            totalBtcHeld += order.btc;
+
+            const row = document.createElement('tr');
+
+            row.innerHTML = `
+                <td>${new Date(order.date).toLocaleDateString('cs-CZ')}</td>
+                <td>${order.czk.toLocaleString('cs-CZ')} CZK</td>
+                <td>${order.btc.toFixed(8)} BTC</td>
+                <td>${currentVal.toLocaleString('cs-CZ', { maximumFractionDigits: 0 })} CZK</td>
+                <td class="${profitVal >= 0 ? 'profit' : 'loss'}">
+                    ${profitVal >= 0 ? '+' : ''}${profitVal.toLocaleString('cs-CZ', { maximumFractionDigits: 0 })} CZK
+                </td>
+                <td class="${profitVal >= 0 ? 'profit' : 'loss'}">
+                    ${profitVal >= 0 ? '+' : ''}${profitPct.toFixed(2)} %
+                </td>
+            `;
+
+            tableBody.appendChild(row);
+        });
+
+        // Celkové souhrny
+        const totalValue = totalBtcHeld * btcPrice;
+        const totalGain = totalValue - totalInvested;
+        const totalGainPct = totalInvested > 0 ? (totalGain / totalInvested) * 100 : 0;
+
+        document.getElementById('total-invested').innerText =
+            totalInvested.toLocaleString('cs-CZ') + " CZK";
+
+        document.getElementById('current-total-value').innerText =
+            totalValue.toLocaleString('cs-CZ', { maximumFractionDigits: 0 }) + " CZK";
+
+        document.getElementById('btc-current-price').innerText =
+            btcPrice.toLocaleString('cs-CZ', { maximumFractionDigits: 0 }) + " CZK";
+
+        document.getElementById('total-btc-held').innerText =
+            totalBtcHeld.toFixed(8) + " BTC";
+
+        const gainEl = document.getElementById('total-profit-val');
+        gainEl.innerText =
+            (totalGain >= 0 ? "+" : "") +
+            totalGain.toLocaleString('cs-CZ', { maximumFractionDigits: 0 }) +
+            " CZK";
+        gainEl.className = totalGain >= 0 ? 'profit' : 'loss';
+
+        const pctEl = document.getElementById('total-profit-pct');
+        pctEl.innerText =
+            (totalGainPct >= 0 ? "+" : "") +
+            totalGainPct.toFixed(2) +
+            " %";
+        pctEl.className = totalGainPct >= 0 ? 'profit' : 'loss';
+
+        statusText.innerText = "Hotovo! Data zobrazena.";
+        document.getElementById('results').style.display = 'block';
+    }
+</script>
+
+</body>
+</html>
